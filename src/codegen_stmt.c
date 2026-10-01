@@ -11935,6 +11935,24 @@ static int case_arms_all_diverge(Compiler *c, int id) {
   return 1;
 }
 
+/* `system(cmd)` as a method's tail: the call's value -- the exit status as a
+   boolean -- is the method's return, but its statement form is a compound
+   (the argv array is built inside braces) whose value is void, so routing
+   the tail through emit_output_call ran the command and let the method
+   answer its trailing default: `def kubectl(cmd) = system(cmd)` was false
+   for every exit status. The expression form carries the value, as it does
+   for a block's tail (#4802). The unsupported argument shapes (an
+   environment Hash, a [command, argv0] pair, an options Hash) are refused
+   identically by both forms, so nothing is lost by the detour. */
+static int tail_call_is_system(Compiler *c, int id) {
+  const NodeTable *nt = c->nt;
+  const char *nm = nt_str(nt, id, "name");
+  if (!nm || !sp_streq(nm, "system") || nt_ref(nt, id, "receiver") >= 0) return 0;
+  int args = nt_ref(nt, id, "arguments"), argc = 0;
+  if (args >= 0) nt_arr(nt, args, "arguments", &argc);
+  return argc >= 1;
+}
+
 void emit_stmt_tail_inner(Compiler *c, int id, Buf *b, int indent) {
   const NodeTable *nt = c->nt;
   const char *ty = nt_type(nt, id);
@@ -12158,6 +12176,7 @@ void emit_stmt_tail_inner(Compiler *c, int id, Buf *b, int indent) {
       ((sp_streq(ty, "WhileNode") || sp_streq(ty, "UntilNode")) &&
        !loop_has_valued_break(c, nt_ref(nt, id, "statements"))) ||
       (sp_streq(ty, "CallNode") && nt_ref(nt, id, "receiver") < 0 &&
+       !tail_call_is_system(c, id) &&
        emit_output_call(c, id, b, indent))) {
     if (!sp_streq(ty, "CallNode")) emit_stmt(c, id, b, indent);
     return;
